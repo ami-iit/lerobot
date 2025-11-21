@@ -20,6 +20,7 @@ import torch
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
+from lerobot.datasets.ergocub_dataset import ergocubDataset
 from lerobot.datasets.lerobot_dataset import (
     LeRobotDataset,
     LeRobotDatasetMetadata,
@@ -60,7 +61,9 @@ def resolve_delta_timestamps(
         if key == ACTION and cfg.action_delta_indices is not None:
             delta_timestamps[key] = [i / ds_meta.fps for i in cfg.action_delta_indices]
         if key.startswith(OBS_PREFIX) and cfg.observation_delta_indices is not None:
-            delta_timestamps[key] = [i / ds_meta.fps for i in cfg.observation_delta_indices]
+            delta_timestamps[key] = [
+                i / ds_meta.fps for i in cfg.observation_delta_indices
+            ]
 
     if len(delta_timestamps) == 0:
         delta_timestamps = None
@@ -81,7 +84,9 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         LeRobotDataset | MultiLeRobotDataset
     """
     image_transforms = (
-        ImageTransforms(cfg.dataset.image_transforms) if cfg.dataset.image_transforms.enable else None
+        ImageTransforms(cfg.dataset.image_transforms)
+        if cfg.dataset.image_transforms.enable
+        else None
     )
 
     if isinstance(cfg.dataset.repo_id, str):
@@ -90,7 +95,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         )
         delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
         if not cfg.dataset.streaming:
-            dataset = LeRobotDataset(
+            dataset = ergocubDataset(
                 cfg.dataset.repo_id,
                 root=cfg.dataset.root,
                 episodes=cfg.dataset.episodes,
@@ -98,7 +103,22 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 image_transforms=image_transforms,
                 revision=cfg.dataset.revision,
                 video_backend=cfg.dataset.video_backend,
+                modality=cfg.dataset.modality,
+                input_modalities=["positions"],
+                output_modalities=["positions"],
             )
+        if cfg.dataset.modality:
+            for key in dataset.meta.stats["observation.state"].keys():
+                if key in ["min", "max", "mean", "std"]:
+                    dataset.meta.stats["observation.state"][key] = dataset.meta.stats[
+                        "observation.state"
+                    ][key][dataset.input_indices]
+            for key in dataset.meta.stats["action"].keys():
+                if key in ["min", "max", "mean", "std"]:
+                    dataset.meta.stats["action"][key] = dataset.meta.stats["action"][
+                        key
+                    ][dataset.output_indices]
+
         else:
             dataset = StreamingLeRobotDataset(
                 cfg.dataset.repo_id,
@@ -126,6 +146,8 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
     if cfg.dataset.use_imagenet_stats:
         for key in dataset.meta.camera_keys:
             for stats_type, stats in IMAGENET_STATS.items():
-                dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
+                dataset.meta.stats[key][stats_type] = torch.tensor(
+                    stats, dtype=torch.float32
+                )
 
     return dataset

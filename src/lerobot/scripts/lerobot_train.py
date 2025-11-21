@@ -13,6 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import json
 import logging
 import time
 from contextlib import nullcontext
@@ -21,6 +22,7 @@ from typing import Any
 
 import torch
 from accelerate import Accelerator
+from line_profiler import profile
 from termcolor import colored
 from torch.optim import Optimizer
 
@@ -46,11 +48,33 @@ from lerobot.utils.train_utils import (
     save_checkpoint,
     update_last_checkpoint,
 )
-from lerobot.utils.utils import (
-    format_big_number,
-    has_method,
-    init_logging,
-)
+from lerobot.utils.utils import format_big_number, has_method, init_logging
+
+
+def load_modality(root_dir):
+    try:
+        with open(f"{root_dir}/meta/modality.json") as f:
+            return json.load(f)
+    except:
+        return None
+
+
+@profile
+def train_loop(
+    step,
+    cfg,
+    dl_iter,
+    train_tracker,
+    policy,
+    optimizer,
+    grad_scaler,
+    lr_scheduler,
+    device,
+    wandb_logger,
+    eval_env,
+    dataset,
+):
+    pass
 
 
 def update_policy(
@@ -151,7 +175,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         from accelerate.utils import DistributedDataParallelKwargs
 
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-        accelerator = Accelerator(step_scheduler_with_optimizer=False, kwargs_handlers=[ddp_kwargs])
+        accelerator = Accelerator(
+            step_scheduler_with_optimizer=False, kwargs_handlers=[ddp_kwargs]
+        )
 
     init_logging(accelerator=accelerator)
 
@@ -169,7 +195,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     else:
         wandb_logger = None
         if is_main_process:
-            logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+            logging.info(
+                colored("Logs will be saved locally.", "yellow", attrs=["bold"])
+            )
 
     if cfg.seed is not None:
         set_seed(cfg.seed, accelerator=accelerator)
@@ -179,6 +207,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
+    cfg.dataset.modality = None  # load_modality(cfg.dataset.root)
     # Dataset loading synchronization: main process downloads first to avoid race conditions
     if is_main_process:
         logging.info("Creating dataset")
@@ -197,7 +226,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if cfg.eval_freq > 0 and cfg.env is not None:
         if is_main_process:
             logging.info("Creating env")
-        eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
+        eval_env = make_env(
+            cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs
+        )
 
     if is_main_process:
         logging.info("Creating policy")
@@ -213,7 +244,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     # Create processors - only provide dataset_stats if not resuming from saved processors
     processor_kwargs = {}
     postprocessor_kwargs = {}
-    if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
+    if (
+        cfg.policy.pretrained_path and not cfg.resume
+    ) or not cfg.policy.pretrained_path:
         # Only provide dataset_stats when not resuming from saved processor state
         processor_kwargs["dataset_stats"] = dataset.meta.stats
 
@@ -222,7 +255,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             "device_processor": {"device": device.type},
             "normalizer_processor": {
                 "stats": dataset.meta.stats,
-                "features": {**policy.config.input_features, **policy.config.output_features},
+                "features": {
+                    **policy.config.input_features,
+                    **policy.config.output_features,
+                },
                 "norm_map": policy.config.normalization_mapping,
             },
         }
@@ -251,13 +287,19 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     step = 0  # number of policy updates (forward + backward + optim)
 
     if cfg.resume:
-        step, optimizer, lr_scheduler = load_training_state(cfg.checkpoint_path, optimizer, lr_scheduler)
+        step, optimizer, lr_scheduler = load_training_state(
+            cfg.checkpoint_path, optimizer, lr_scheduler
+        )
 
-    num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
+    num_learnable_params = sum(
+        p.numel() for p in policy.parameters() if p.requires_grad
+    )
     num_total_params = sum(p.numel() for p in policy.parameters())
 
     if is_main_process:
-        logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
+        logging.info(
+            colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}"
+        )
         if cfg.env is not None:
             logging.info(f"{cfg.env.task=}")
             logging.info("Creating environment processors")
@@ -269,8 +311,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info(f"{dataset.num_episodes=}")
         num_processes = accelerator.num_processes
         effective_bs = cfg.batch_size * num_processes
-        logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}")
-        logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
+        logging.info(
+            f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}"
+        )
+        logging.info(
+            f"{num_learnable_params=} ({format_big_number(num_learnable_params)})"
+        )
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # create dataloader for offline training
@@ -365,7 +411,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         if cfg.save_checkpoint and is_saving_step:
             if is_main_process:
                 logging.info(f"Checkpoint policy after step {step}")
-                checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
+                checkpoint_dir = get_step_checkpoint_dir(
+                    cfg.output_dir, cfg.steps, step
+                )
                 save_checkpoint(
                     checkpoint_dir=checkpoint_dir,
                     step=step,
@@ -427,7 +475,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 if wandb_logger:
                     wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                     wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
-                    wandb_logger.log_video(eval_info["overall"]["video_paths"][0], step, mode="eval")
+                    wandb_logger.log_video(
+                        eval_info["overall"]["video_paths"][0], step, mode="eval"
+                    )
 
             accelerator.wait_for_everyone()
 

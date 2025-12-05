@@ -107,17 +107,32 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 input_modalities=["positions"],
                 output_modalities=["positions"],
             )
-        if cfg.dataset.modality:
-            for key in dataset.meta.stats["observation.state"].keys():
-                if key in ["min", "max", "mean", "std"]:
-                    dataset.meta.stats["observation.state"][key] = dataset.meta.stats[
-                        "observation.state"
-                    ][key][dataset.input_indices]
-            for key in dataset.meta.stats["action"].keys():
-                if key in ["min", "max", "mean", "std"]:
-                    dataset.meta.stats["action"][key] = dataset.meta.stats["action"][
-                        key
-                    ][dataset.output_indices]
+            if cfg.dataset.modality:
+                # Fix the stats
+                for key in dataset.meta.stats["observation.state"].keys():
+                    if key in ["min", "max", "mean", "std"]:
+                        dataset.meta.stats["observation.state"][key] = (
+                            dataset.meta.stats["observation.state"][key][
+                                dataset.input_indices
+                            ]
+                        )
+                for key in dataset.meta.stats["action"].keys():
+                    if key in ["min", "max", "mean", "std"]:
+                        dataset.meta.stats["action"][key] = dataset.meta.stats[
+                            "action"
+                        ][key][dataset.output_indices]
+                # fix the names
+                dataset.meta.features["observation.state"][
+                    "names"
+                ] = dataset.input_names
+                dataset.meta.features["action"]["names"] = dataset.output_names
+                # fix shapes
+                dataset.meta.features["observation.state"]["shape"] = (
+                    len(dataset.input_indices),
+                )
+                dataset.meta.features["action"]["shape"] = (
+                    len(dataset.output_indices),
+                )
 
         else:
             dataset = StreamingLeRobotDataset(

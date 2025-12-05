@@ -18,15 +18,19 @@ class ergocubDataset(LeRobotDataset):
         if modality is not None:
             self.input_indices = []
             self.output_indices = []
+            self.input_names = []
+            self.output_names = []
 
             for modality_name in input_modalities:
                 start = modality["state"][modality_name]["start"]
                 end = modality["state"][modality_name]["end"]
                 self.input_indices += list(range(start, end))
+                self.input_names += modality["state"][modality_name]["names"]
             for modality_name in output_modalities:
                 start = modality["action"][modality_name]["start"]
                 end = modality["action"][modality_name]["end"]
                 self.output_indices += list(range(start, end))
+                self.output_names += modality["action"][modality_name]["names"]
 
     def __getitem__(self, idx):
         # Call parent __getitem__

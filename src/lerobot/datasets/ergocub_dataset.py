@@ -36,8 +36,14 @@ class ergocubDataset(LeRobotDataset):
         # Call parent __getitem__
         result = super().__getitem__(idx)
         if self.modality is not None:
-            result["observation.state"] = result["observation.state"][
-                self.input_indices
-            ]
+            # check if the observation.state has one or more dimensions
+            if len(result["observation.state"].shape) == 1:
+                result["observation.state"] = result["observation.state"][
+                    self.input_indices
+                ]
+            else:
+                result["observation.state"] = result["observation.state"][
+                    :, self.input_indices
+                ]
             result["action"] = result["action"][:, self.output_indices]
         return result
